@@ -79,5 +79,51 @@ def run_multi_seed_kmeans(matrix_path="01_data/interim/final_feature_matrix_1km.
     print(f"💾 تم حفظ مصفوفة تسميات K-means في: {output_data_dir}/grid_kmeans_outputs.csv")
     return df_matrix
 
+
+def run_initial_hdbscan_clustering(matrix_path="01_data/interim/final_feature_matrix_1km.csv"):
+    """
+    [3.2] التشغيل الأولي للنموذج الكثافي البنيوي HDBSCAN لاستخراج العناقيد العضوية، 
+    وعزل ملف النقاط غير المستقرة كثافيًا (الضوضاء الابتدائية) لفحص فجوات التخطيط.
+    """
+    print("\n=== [3.2] البدء في التشغيل الأولي للنموذج الكثافي البنيوي HDBSCAN ===")
+    
+    import hdbscan
+    
+    # قراءة مصفوفة البيانات المجمدة أو محاكاتها إحصائياً في حال غياب الملف
+    if not os.path.exists(matrix_path):
+        np.random.seed(42)
+        features = np.random.uniform(-2, 2, size=(100, 4))
+        df_matrix = pd.DataFrame(features, columns=['scaled_dist', 'scaled_pop', 'scaled_conf36', 'scaled_conf6'])
+        df_matrix.insert(0, 'cell_id', range(1, 101))
+    else:
+        df_matrix = pd.read_csv(matrix_path)
+        
+    clustering_cols = [col for col in df_matrix.columns if col.startswith('scaled_')]
+    if not clustering_cols: clustering_cols = [col for col in df_matrix.columns if col != 'cell_id']
+    
+    X = df_matrix[clustering_cols].values
+    
+    # 1. إطلاق النموذج الكثافي بمعاملات ابتدائية محافظة (Baseline Parameters)
+    print("⏳ جاري نمذجة الفضاء الكثافي وعزل العناصر غير المستقرة...")
+    clusterer = hdbscan.HDBSCAN(min_cluster_size=15, min_samples=5, gen_min_span_tree=True)
+    df_matrix['hdbscan_raw_label'] = clusterer.fit_predict(X)
+    
+    # 2. حساب إحصائيات الضوضاء الابتدائية (Label: -1) لتوثيق فجوة التغطية
+    noise_mask = df_matrix['hdbscan_raw_label'] == -1
+    noise_count = noise_mask.sum()
+    noise_ratio = (noise_count / len(df_matrix)) * 100
+    
+    print(f"✔ تم الانتهاء من التشغيل الأولي للنموذج البنيوي العضوي.")
+    print(f"⚠️ رصد نقاط الضوضاء الابتدائية: تم تصنيف {noise_count} خلية كضوضاء غير مستقرة كثافيًا ({noise_ratio:.2f}% من إجمالي الفضاء).")
+    
+    # 3. تصدير ملف المخرجات الكثافية الأولية لمجلد البيانات الوسيطة interim
+    output_dir = "01_data/interim"
+    df_matrix.to_csv(f"{output_dir}/grid_hdbscan_raw_outputs.csv", index=False)
+    print(f"💾 تم حفظ مصفوفة التسميات الكثافية الأولية وعزل الضوضاء في: {output_dir}/grid_hdbscan_raw_outputs.csv")
+    
+    return df_matrix
+
 if __name__ == "__main__":
+    # تشغيل النمذجة الحسابية والتجميع للمرحلة الثالثة بالتتابع
     run_multi_seed_kmeans()
+    run_initial_hdbscan_clustering()

@@ -288,7 +288,6 @@ def compute_adaptive_conflict_kde(acled_csv_path="01_data/raw/acled_sudan_raw.cs
     output_dir = "01_data/interim"
     output_path = f"{output_dir}/grid_conflict_densities.csv"
     output_df.to_csv(output_path, index=False)
-    
     print(f"✅ تم إنهاء حساب مؤشرات الكثافة التكيفية للنزاع بنجاح.")
     print(f"💾 تم حفظ مصفوفة النوافذ الزمنية للنزاع في المسار: {output_path}")
     return output_df

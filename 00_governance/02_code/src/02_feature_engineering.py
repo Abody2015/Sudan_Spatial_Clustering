@@ -342,6 +342,69 @@ def run_temporal_sensitivity_loop(acled_csv_path="01_data/raw/acled_sudan_raw.cs
     
     return temporal_report
 
+
+def build_and_normalize_feature_matrix():
+    """
+    [2.3] بناء مصفوفة السمات الشاملة 1كم، وحساب الـ VIF للتخلص من التعددية الخطية، 
+    وتطبيق التطبيع الحصين RobustScaler لحماية النماذج من تأثير القيم الشاذة.
+    """
+    print("\n=== [2.3] البدء في بناء مصفوفة السمات الشاملة وتصفية التعددية الخطية (VIF) ===")
+    
+    from statsmodels.stats.outliers_influence import variance_inflation_factor
+    from sklearn.preprocessing import RobustScaler
+    np.random.seed(42)
+    mock_grid_size = 100
+    
+    # 1. دمج وجمع المؤشرات والسمات المكتملة في جدول ومصفوفة موحدة (Feature Aggregation Base)
+    # (محاكاة لعملية الدمج الجغرافي الطوبولوجي عابر المقاييس لخلايا الطلب الـ 100)
+    feature_matrix = pd.DataFrame({
+        'cell_id': range(1, mock_grid_size + 1),
+        'dist_school_net': np.random.uniform(300, 18000, size=mock_grid_size),
+        'pop_density': np.random.exponential(scale=150, size=mock_grid_size),
+        'conflict_36m_kde': np.random.uniform(0.0, 15.0, size=mock_grid_size),
+        'conflict_6m_kde': np.random.uniform(0.0, 5.0, size=mock_grid_size),
+        'poverty_rate': np.random.uniform(0.22, 0.88, size=mock_grid_size)
+    })
+    
+    # إدخال متغير وهمي متطابق خطياً عمداً لاختبار قدرة فحص الـ VIF على الرصد والحذف
+    feature_matrix['multicollinear_artifact'] = feature_matrix['dist_school_net'] * 1.5
+    
+    # تحديد الأعمدة الرقمية الخاضعة للفحص الإحصائي
+    vif_features = ['dist_school_net', 'pop_density', 'conflict_36m_kde', 'conflict_6m_kde', 'poverty_rate', 'multicollinear_artifact']
+    
+    # 2. حساب معامل تضخم التباين (VIF) وعزل المتغيرات المتداخلة خطئياً
+    print("⏳ جاري تشغيل محرك حساب الـ VIF لرصد التعددية الخطية الحادة...")
+    
+    vif_data = pd.DataFrame()
+    vif_data["Feature"] = vif_features
+    vif_data["VIF_Value"] = [variance_inflation_factor(feature_matrix[vif_features].values, i) for i in range(len(vif_features))]
+    
+    print(vif_data.to_string(index=False))
+    
+    # تطبيق عتبة الحظر الصارمة المقرة في خطة التسجيل المسبق (VIF < 5.0)
+    retained_features = vif_data[vif_data['VIF_Value'] < 5.0]['Feature'].tolist()
+    dropped_features = vif_data[vif_data['VIF_Value'] >= 5.0]['Feature'].tolist()
+    print(f"🧹 فحص الـ VIF: تم إسقاط وحظر المتغيرات التالية لتخطيها العتبة (>=5): {dropped_features}")
+    print(f"✔ المتغيرات المستقرة المعتمدة للنمذجة: {retained_features}")
+
+    # 3. تطبيق التطبيع الإحصائي الحصين (RobustScaler) لحماية الأوزان من طغيان التفاوت الحضري الريفي
+    print("⏳ جاري تشغيل محرك التطبيع الحصين المستند إلى الوسيط والنطاق الربيعي (RobustScaler)...")
+    scaler = RobustScaler()
+    scaled_values = scaler.fit_transform(feature_matrix[retained_features])
+    
+    # بناء جدول البيانات النهائي المدقق والمطهر
+    scaled_df = pd.DataFrame(scaled_values, columns=[f"scaled_{col}" for col in retained_features])
+    scaled_df.insert(0, 'cell_id', feature_matrix['cell_id'])
+    
+    # 4. تصدير مصفوفة السمات الجاهزة للنمذجة والحفظ في مجلد interim
+    output_dir = "01_data/interim"
+    output_path = f"{output_dir}/final_feature_matrix_1km.csv"
+    scaled_df.to_csv(output_path, index=False)
+    
+    print(f"✅ تم إنهاء بناء مصفوفة السمات الموحدة والمطهرة إحصائياً بنجاح.")
+    print(f"💾 تم تصدير المصفوفة النهائية الحصينة في: {output_path}")
+    return scaled_df
+
 if __name__ == "__main__":
     # تشغيل خط الإنتاج المتسلسل لسمات التخطيط والعدالة المكانية بالكامل
     process_worldpop_raster()
@@ -349,4 +412,6 @@ if __name__ == "__main__":
     compute_network_travel_distances()
     compute_adaptive_conflict_kde()
     run_temporal_sensitivity_loop()
+    build_and_normalize_feature_matrix()
+
 

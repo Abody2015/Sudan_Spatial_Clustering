@@ -180,19 +180,90 @@ def analyze_rank_shift(matrix_path="01_data/interim/cdu_prioritization_ranks.csv
     if overlap_k_h < top_10_percent:
         print(f"💡 استنتاج: هناك {top_10_percent - overlap_k_h} محلية تدخل وتخرج من قائمة الأولويات بناءً على الخوارزمية!")
 
+
+def run_monte_carlo_dirichlet(matrix_path="01_data/interim/cdu_prioritization_ranks.csv", n_simulations=1000):
+    """
+    [5.2] محاكاة مونت كارلو لأوزان السياسات باستخدام توزيع Dirichlet 
+    لحساب احتمالية استقرار أو تحول المحليات الإدارية إلى الفئات الحرجة.
+    """
+    print("\n=== [5.2] إطلاق محرك محاكاة مونت كارلو (توزيع Dirichlet) ===")
+    if not os.path.exists(matrix_path):
+        print(f"❌ لم يتم العثور على مصفوفة الرتب في: {matrix_path}")
+        return
+
+    cdu_df = pd.read_csv(matrix_path)
+    n_localities = len(cdu_df)
+    
+    # 1. التطبيع القياسي للسمات الأصلية المخزنة باستخدام Min-Max
+    cols_to_use = ['weighted_dist_school_grid', 'weighted_conflict_kde_grid', 'poverty_rate']
+    norm_df = pd.DataFrame()
+    for col in cols_to_use:
+        min_v = cdu_df[col].min()
+        max_v = cdu_df[col].max()
+        norm_df[f'{col}_norm'] = (cdu_df[col] - min_v) / (max_v - min_v if max_v != min_v else 1)
+
+    # 2. توليد مصفوفة الأوزان العشوائية المستقرة من توزيع ديريشلي
+    np.random.seed(42)
+    alpha_parameters = [1.0, 1.0, 1.0]
+    weights_matrix = np.random.dirichlet(alpha_parameters, size=n_simulations)
+    
+    print(f"✔ تم توليد {n_simulations} مصفوفة وزن عشوائية مستقرة (مجموع الأوزان دائماً = 1.0).")
+    
+    # مصفوفة لتخزين الرتب الناتجة لكل محلية في كل محاكاة
+    all_simulation_ranks = np.zeros((n_localities, n_simulations))
+    
+    # 3. تشغيل حلقة المحاكاة التكرارية الكثيفة
+    for sim in range(n_simulations):
+        w = weights_matrix[sim]
+        
+        # حساب النقاط المركبة للمحاكاة الحالية
+        score = (w * norm_df['weighted_dist_school_grid_norm'] +
+                 w * norm_df['weighted_conflict_kde_grid_norm'] +
+                 w * norm_df['poverty_rate_norm'])
+        
+        # حساب الرتبة وتخزينها (الأعلى احتياجاً يأخذ الرتبة 1)
+        all_simulation_ranks[:, sim] = score.rank(ascending=False, method='min')
+        
+    # 4. حساب المؤشرات الإحصائية المتقدمة للمتانة والاستقرار
+    cdu_df['EPI_Mean_Rank'] = np.mean(all_simulation_ranks, axis=1)
+    cdu_df['EPI_Rank_Std'] = np.std(all_simulation_ranks, axis=1)
+    
+    # حساب احتمالية دخول المحلية في النطاق الحرج لأعلى 15% من الأولويات التنموية
+    top_threshold = int(n_localities * 0.15)
+    is_top_priority = all_simulation_ranks <= top_threshold
+    cdu_df['Top_Priority_Probability'] = np.sum(is_top_priority, axis=1) / n_simulations
+    
+    # فرز وتحديد المحليات ذات اليقين الاستراتيجي العالي المطلق
+    robust_localities = cdu_df[cdu_df['Top_Priority_Probability'] >= 0.85]
+    print(f"📌 الاستنتاج الإحصائي: تم رصد {len(robust_localities)} محلية ذات أولوية قصوى مستقرة بيقين >= 85% بصرف النظر عن انحياز السياسة.")
+    
+    # تصدير مصفوفة المحاكاة الشاملة
+    output_path = "01_data/interim/cdu_monte_carlo_matrix.csv"
+    cdu_df.to_csv(output_path, index=False)
+    print(f"💾 تم حفظ مصفوفة مونت كارلو الاحتمالية بنجاح في: {output_path}")
+    
+    print("\n📊 عينة من المحليات الأكثر استقراراً في الاحتياج الحرج (Top 5):")
+    print(cdu_df[['locality_id', 'EPI_Mean_Rank', 'EPI_Rank_Std', 'Top_Priority_Probability']]
+          .sort_values(by='Top_Priority_Probability', ascending=False).head(5).to_string(index=False))
+          
+    return output_path
+
 if __name__ == "__main__":
     print("🚀 بدء تشغيل خط الإنتاج للمرحلة الرابعة والخامسة بالكامل...")
     
     # 1. تشغيل المحرك الجغرافي الإقليمي (SKATER)
     gdf_localities_frozen = run_skater_regionalization_with_connectivity()
     
-    # 2. تشغيل محرك التجميع السكاني الموزون عابر المقاييس وحفظ المصفوفة
+    # 2. تشغيل محرك التجميع السكاني الموزون عابر المقاييس وحفظ مصفوفة CDU
     cdu_matrix_path_frozen = execute_cross_scale_zonal_aggregation(gdf_localities_frozen)
     
-    # 3. حساب مؤشر الأولوية التعليمية EPI بناءً على مصفوفة CDU
+    # 3. حساب مؤشر الأولوية التعليمية Baseline EPI بناءً على مصفوفة CDU وتوليد الرتب الأساسية
     ranks_output_path = compute_educational_prioritization_index(cdu_matrix_path_frozen)
     
-    # 4. تشغيل محرك تحليل إزاحة الرتب وإخراج مصفوفة الاتفاق
+    # 4. تشغيل محرك تحليل إزاحة الرتب وإخراج مصفوفة الاتفاق الزوجي [5.1]
     analyze_rank_shift(ranks_output_path)
     
-    print("\n🏁 تم إنهاء خط الإنتاج والتحقق الإحصائي بنجاح الحصين!")
+    # 5. تشغيل محاكاة مونت كارلو وتوزيع ديريشلي لتأمين المتانة الإحصائية [5.2]
+    monte_carlo_output_path = run_monte_carlo_dirichlet(ranks_output_path)
+    
+    print("\n🏁 تم إنهاء خط الإنتاج والتحقق الإحصائي والمحاكاة الاحتمالية بنجاح الحصين!")

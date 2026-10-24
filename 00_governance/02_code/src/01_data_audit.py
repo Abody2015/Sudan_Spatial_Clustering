@@ -3,7 +3,6 @@ import requests
 import numpy as np
 import geopandas as gpd
 from shapely.geometry import Point
-from scipy.stats import spearmanr
 
 def fetch_and_clean_osm_schools(output_path="01_data/interim/schools_cleaned.gpkg"):
     """
@@ -14,7 +13,7 @@ def fetch_and_clean_osm_schools(output_path="01_data/interim/schools_cleaned.gpk
     
     overpass_url = "http://overpass-api.de"
     
-    # بناء الاستعلام الجغرافي لدولة السودان (بإصلاح وسوم الصيغة الحصينة)
+    # بناء الاستعلام الجغرافي لدولة السودان بصيغة حصينة ومغلقة
     overpass_query = """
     [out:json][timeout:180];
     area["ISO3166-1"="SD"]->.searchArea;
@@ -40,7 +39,7 @@ def fetch_and_clean_osm_schools(output_path="01_data/interim/schools_cleaned.gpk
         print("⚠️ تحذير: لم يتم العثور على أي سجلات مستخرجة.")
         return None
 
-    # 2. بناء هندسة المتجهات وتنظيف البيانات مكانياً
+    # بناء هندسة المتجهات وتنظيف البيانات مكانياً
     valid_schools = []
     for elem in elements:
         lat = elem.get('lat') or elem.get('center', {}).get('lat')
@@ -60,8 +59,7 @@ def fetch_and_clean_osm_schools(output_path="01_data/interim/schools_cleaned.gpk
     # التحويل إلى إسقاط متري متساوي المساحات (Sudan UTM Zone 36N) لحساب المسافات بدقة
     gdf_schools = gdf_schools.to_crs("EPSG:32636")
     
-    # 3. إزالة النقاط المكررة مكانياً (Spatial Deduplication)
-    # إذا كانت المسافة بين مدرستين أقل من 10 أمتار، يتم دمج السجل وحذف التكرار
+    # إزالة النقاط المكررة مكانياً (Spatial Deduplication)
     initial_count = len(gdf_schools)
     gdf_schools['geometry_string'] = gdf_schools['geometry'].apply(lambda geom: f"{geom.x:.1f}_{geom.y:.1f}")
     gdf_schools = gdf_schools.drop_duplicates(subset=['geometry_string']).drop(columns=['geometry_string'])

@@ -99,7 +99,7 @@ def execute_cross_scale_zonal_aggregation(gdf_localities, n_cells_per_locality=2
     cdu_matrix.to_csv(output_path, index=False)
     
     print(f"💾 تم تصدير مصفوفة CDU في: {output_path}")
-    return cdu_matrix
+    return output_path
 
 def compute_educational_prioritization_index(cdu_matrix_path="01_data/interim/cdu_localities_matrix.csv"):
     """
@@ -108,7 +108,7 @@ def compute_educational_prioritization_index(cdu_matrix_path="01_data/interim/cd
     print("\n=== [5.0] حساب مؤشر الأولوية التعليمية (EPI) ===")
     
     if not os.path.exists(cdu_matrix_path):
-        print("⚠️ المصفوفة غير موجودة محلياً، جاري توليد مصفوفة اختبارية...")
+        print("⚠️ Matrix not found locally, generating mock simulation matrix...")
         np.random.seed(42)
         cdu_df = pd.DataFrame({
             'locality_id': [f"SD_LOC_{i:03d}" for i in range(1, 190)],
@@ -120,17 +120,17 @@ def compute_educational_prioritization_index(cdu_matrix_path="01_data/interim/cd
     else:
         cdu_df = pd.read_csv(cdu_matrix_path)
 
-    # التطبيع الإحصائي
+    # التطبيع الإحصائي Z-Score
     norm_dist = (cdu_df['weighted_dist_school_grid'] - cdu_df['weighted_dist_school_grid'].median()) / cdu_df['weighted_dist_school_grid'].std()
     norm_conf = (cdu_df['weighted_conflict_kde_grid'] - cdu_df['weighted_conflict_kde_grid'].median()) / cdu_df['weighted_conflict_kde_grid'].std()
     norm_pov = (cdu_df['poverty_rate'] - cdu_df['poverty_rate'].median()) / cdu_df['poverty_rate'].std()
     
-    # 3 سيناريوهات
+    # 3 سيناريوهات للسياسات تعكس تحيزات الخوارزميات
     cdu_df['epi_score_kmeans'] = (0.50 * norm_dist) + (0.25 * norm_conf) + (0.25 * norm_pov)
     cdu_df['epi_score_hdbscan'] = (0.25 * norm_dist) + (0.50 * norm_conf) + (0.25 * norm_pov)
     cdu_df['epi_score_skater'] = (0.25 * norm_dist) + (0.25 * norm_conf) + (0.50 * norm_pov)
     
-    # الرتب
+    # حساب الرتب بناءً على مجموع النقاط
     cdu_df['rank_kmeans'] = cdu_df['epi_score_kmeans'].rank(ascending=False)
     cdu_df['rank_hdbscan'] = cdu_df['epi_score_hdbscan'].rank(ascending=False)
     cdu_df['rank_skater'] = cdu_df['epi_score_skater'].rank(ascending=False)
@@ -141,11 +141,11 @@ def compute_educational_prioritization_index(cdu_matrix_path="01_data/interim/cd
     
     print(f"✅ تم صياغة مؤشر EPI وتوليد الرتب.")
     print(cdu_df[['locality_id', 'rank_kmeans', 'rank_hdbscan', 'rank_skater']].head(5).to_string(index=False))
-    return cdu_df
+    return output_path
 
 def analyze_rank_shift(matrix_path="01_data/interim/cdu_prioritization_ranks.csv"):
     """
-    [5.1] تحليل إزاحة الرتب وإثبات عدم حيادية الخوارزميات
+    [5.1] تحليل إزاحة الرتب وإثبات عدم حيادية الخوارزميات.
     """
     print("\n=== [5.1] تحليل إزاحة الرتب ===")
     if not os.path.exists(matrix_path):
@@ -181,10 +181,18 @@ def analyze_rank_shift(matrix_path="01_data/interim/cdu_prioritization_ranks.csv
         print(f"💡 استنتاج: هناك {top_10_percent - overlap_k_h} محلية تدخل وتخرج من قائمة الأولويات بناءً على الخوارزمية!")
 
 if __name__ == "__main__":
-    # تشغيل خط الإنتاج للمرحلة الرابعة والخامسة
-    print("🚀 بدء التشغيل...")
+    print("🚀 بدء تشغيل خط الإنتاج للمرحلة الرابعة والخامسة بالكامل...")
     
+    # 1. تشغيل المحرك الجغرافي الإقليمي (SKATER)
     gdf_localities_frozen = run_skater_regionalization_with_connectivity()
-    cdu_matrix_frozen = execute_cross_scale_zonal_aggregation(gdf_localities_frozen)
-    compute_educational_prioritization_index()
-    analyze_rank_shift()
+    
+    # 2. تشغيل محرك التجميع السكاني الموزون عابر المقاييس وحفظ المصفوفة
+    cdu_matrix_path_frozen = execute_cross_scale_zonal_aggregation(gdf_localities_frozen)
+    
+    # 3. حساب مؤشر الأولوية التعليمية EPI بناءً على مصفوفة CDU
+    ranks_output_path = compute_educational_prioritization_index(cdu_matrix_path_frozen)
+    
+    # 4. تشغيل محرك تحليل إزاحة الرتب وإخراج مصفوفة الاتفاق
+    analyze_rank_shift(ranks_output_path)
+    
+    print("\n🏁 تم إنهاء خط الإنتاج والتحقق الإحصائي بنجاح الحصين!")

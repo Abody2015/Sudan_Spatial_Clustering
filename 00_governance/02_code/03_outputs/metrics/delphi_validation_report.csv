@@ -1,0 +1,3 @@
+Metric_Name,Calculated_Value,Validation_Status
+Kendall_W,0.57,Failed
+Fleiss_Kappa,0.3,Check
